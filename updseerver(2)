@@ -1,0 +1,54 @@
+#include <iostream>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+#pragma comment(lib, "ws2_32.lib")
+
+using namespace std;
+
+struct MyData {
+    int id;
+    char message[256];
+};
+
+int main() {
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+    // SOCK_DGRAM для UDP
+    SOCKET serverSocket = socket(AF_INET, SOCK_DGRAM, 0);
+
+    sockaddr_in serverAddr, clientAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    serverAddr.sin_port = htons(7777);
+
+    if (bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        cout << "Bind failed" << endl;
+        return 1;
+    }
+
+    cout << "UDP Echo Server listening on port 7777..." << endl;
+
+    MyData data;
+    int clientAddrSize = sizeof(clientAddr);
+
+    while (true) {
+        // recvfrom получает данные И адрес отправителя
+        int bytesIn = recvfrom(serverSocket, (char*)&data, sizeof(data), 0, (sockaddr*)&clientAddr, &clientAddrSize);
+        
+        if (bytesIn == SOCKET_ERROR) {
+            cout << "Error receiving data" << endl;
+            continue;
+        }
+
+        cout << "Received from client: " << data.message << endl;
+
+        // Эхо - отправляем то же самое обратно (sendto)
+        sendto(serverSocket, (char*)&data, sizeof(data), 0, (sockaddr*)&clientAddr, clientAddrSize);
+    }
+
+    closesocket(serverSocket);
+    WSACleanup();
+    return 0;
+}
