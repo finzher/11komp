@@ -1,0 +1,45 @@
+#include <iostream>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <string>
+
+#pragma comment(lib, "ws2_32.lib")
+
+using namespace std;
+
+struct MyData {
+    int id;
+    char message[256];
+};
+
+int main() {
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+    SOCKET clientSocket = socket(AF_INET, SOCK_DGRAM, 0);
+
+    sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(7777);
+    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    MyData data;
+    data.id = 100;
+    int serverSize = sizeof(serverAddr);
+
+    while (true) {
+        cout << "Enter UDP message: ";
+        cin.getline(data.message, 256);
+
+        sendto(clientSocket, (char*)&data, sizeof(data), 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
+
+        int bytes = recvfrom(clientSocket, (char*)&data, sizeof(data), 0, (sockaddr*)&serverAddr, &serverSize);
+        if (bytes > 0) {
+            cout << "Echo from server: " << data.message << endl;
+        }
+    }
+
+    closesocket(clientSocket);
+    WSACleanup();
+    return 0;
+}
