@@ -1,0 +1,149 @@
+#include <iostream>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <vector>
+#include <thread>
+#include <mutex>
+#include "chat_common.h"
+
+#pragma comment(lib, "ws2_32.lib")
+
+using namespace std;
+
+struct ClientInfo {
+    SOCKET socket;
+    string nickname;
+};
+
+vector<ClientInfo> clients; 
+mutex clientsMutex;        
+
+void sendPacket(SOCKET s, Packet& p) {
+    send(s, (char*)&p, sizeof(p), 0);
+}
+
+// Рассылка всем (Broadcast)
+void broadcast(Packet& p, SOCKET senderSocket) {
+    lock_guard<mutex> lock(clientsMutex); // Блокируем доступ к списку
+    for (auto& client : clients) {
+        if (client.socket != senderSocket) { // Не отправляем самому себе
+            sendPacket(client.socket, p);
+        }
+    }
+}
+
+// Отправка приватного сообщения
+void sendPrivate(Packet& p, string targetNick) {
+    lock_guard<mutex> lock(clientsMutex);
+    bool found = false;
+    for (auto& client : clients) {
+        if (client.nickname == targetNick) {
+            sendPacket(client.socket, p);
+            found = true;
+            break;
+        }
+    }
+}
+
+// Функция, которая работает в отдельном потоке для каждого клиента
+void clientHandler(SOCKET clientSocket) {
+    Packet packet;
+    string nickname;
+
+    // 1. Ждем пакет LOGIN
+    if (recv(clientSocket, (char*)&packet, sizeof(packet), 0) > 0) {
+        if (packet.type == LOGIN) {
+            nickname = packet.text;
+            
+            // Добавляем в список
+            {
+                lock_guard<mutex> lock(clientsMutex);
+                clients.push_back({ clientSocket, nickname });
+            }
+
+            cout << "User connected: " << nickname << endl;
+
+            // Уведомляем остальных
+            Packet msg;
+            msg.type = SERVER_MSG;
+            string info = "Server: " + nickname + " joined the chat.";
+            strcpy_s(msg.text, info.c_str());
+            broadcast(msg, clientSocket);
+        }
+    }
+
+    // 2. Основной цикл общения
+    while (true) {
+        int bytes = recv(clientSocket, (char*)&packet, sizeof(packet), 0);
+        if (bytes <= 0) break; // Клиент отключился
+
+        if (packet.type == MESSAGE) {
+            // Формируем сообщение "Ник: текст"
+            string fullMsg = nickname + ": " + packet.text;
+            Packet outPacket;
+            outPacket.type = MESSAGE;
+            strcpy_s(outPacket.text, fullMsg.c_str());
+            
+            broadcast(outPacket, clientSocket);
+        }
+        else if (packet.type == PRIVATE) {
+            // Приватное сообщение
+            string fullMsg = "[Private from " + nickname + "]: " + packet.text;
+            string target = packet.targetNick;
+            
+            Packet outPacket;
+            outPacket.type = MESSAGE; // Для получателя это просто текст
+            strcpy_s(outPacket.text, fullMsg.c_str());
+            
+            sendPrivate(outPacket, target);
+        }
+    }
+
+    // 3. Обработка отключения
+    {
+        lock_guard<mutex> lock(clientsMutex);
+        // Удаляем клиента из вектора (немного сложно для вектора, но стандартно)
+        for (auto it = clients.begin(); it != clients.end(); ++it) {
+            if (it->socket == clientSocket) {
+                clients.erase(it);
+                break;
+            }
+        }
+    }
+
+    cout << "User disconnected: " << nickname << endl;
+    Packet msg;
+    msg.type = SERVER_MSG;
+    string info = "Server: " + nickname + " left the chat.";
+    strcpy_s(msg.text, info.c_str());
+    broadcast(msg, clientSocket);
+
+    closesocket(clientSocket);
+}
+
+int main() {
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+    SOCKET serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(7777);
+
+    bind(serverSocket, (sockaddr*)&addr, sizeof(addr));
+    listen(serverSocket, SOMAXCONN);
+
+    cout << "Chat Server started on port 7777..." << endl;
+
+    while (true) {
+        SOCKET clientSocket = accept(serverSocket, NULL, NULL);
+        if (clientSocket != INVALID_SOCKET) {
+            // Запускаем поток для нового клиента
+            // detach() позволяет потоку работать самостоятельно
+            thread(clientHandler, clientSocket).detach();
+        }
+    }
+
+    return 0;
+}
