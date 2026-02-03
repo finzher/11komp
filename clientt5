@@ -1,0 +1,94 @@
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#include <iostream>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <thread>
+#include <string>
+#include "chat_common.h"
+
+#pragma comment(lib, "ws2_32.lib")
+
+using namespace std;
+
+bool isRunning = true;
+
+// Функция для получения сообщений (работает в фоне)
+void receiverThread(SOCKET s) {
+    Packet p;
+    while (isRunning) {
+        int bytes = recv(s, (char*)&p, sizeof(p), 0);
+        if (bytes <= 0) {
+            cout << "\nDisconnected from server.\n";
+            isRunning = false;
+            break;
+        }
+
+        if (p.type == MESSAGE || p.type == SERVER_MSG) {
+            cout << p.text << endl;
+        }
+    }
+}
+
+int main() {
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+    SOCKET clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(7777);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    if (connect(clientSocket, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+        cout << "Connect failed." << endl;
+        return 1;
+    }
+
+    cout << "Connected! Enter your nickname: ";
+    string nickname;
+    getline(cin, nickname);
+
+    // 1. Отправляем LOGIN пакет
+    Packet loginPacket;
+    loginPacket.type = LOGIN;
+    strcpy_s(loginPacket.text, nickname.c_str());
+    send(clientSocket, (char*)&loginPacket, sizeof(loginPacket), 0);
+
+    // 2. Запускаем поток прослушивания
+    thread t(receiverThread, clientSocket);
+    t.detach();
+
+    cout << "Chat started. Type message or '@nick message' for private.\n";
+
+    // 3. Основной цикл отправки
+    while (isRunning) {
+        string input;
+        getline(cin, input);
+        if (input == "exit") break;
+
+        Packet p;
+        // Проверка на приватное сообщение (@vasya Привет)
+        if (input[0] == '@') {
+            size_t spacePos = input.find(' ');
+            if (spacePos != string::npos) {
+                p.type = PRIVATE;
+                // Извлекаем ник (без @)
+                string target = input.substr(1, spacePos - 1);
+                string msg = input.substr(spacePos + 1);
+                
+                strcpy_s(p.targetNick, target.c_str());
+                strcpy_s(p.text, msg.c_str());
+            }
+        } else {
+            p.type = MESSAGE;
+            strcpy_s(p.text, input.c_str());
+        }
+
+        send(clientSocket, (char*)&p, sizeof(p), 0);
+    }
+
+    isRunning = false;
+    closesocket(clientSocket);
+    WSACleanup();
+    return 0;
+}
