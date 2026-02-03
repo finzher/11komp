@@ -1,0 +1,58 @@
+#include <iostream>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <string>
+
+#pragma comment(lib, "ws2_32.lib")
+
+using namespace std;
+
+struct MyData {
+    int id;
+    char message[256];
+};
+
+int main() {
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+    SOCKET clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+
+    sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(5555);
+
+    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    // Соединение (Connect)
+    if (connect(clientSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        cout << "Connection failed" << endl;
+        return 1;
+    }
+
+    cout << "Connected to server!" << endl;
+
+    MyData data;
+    data.id = 1;
+
+    while (true) {
+        cout << "Enter message (or 'exit'): ";
+        cin.getline(data.message, 256);
+
+        if (string(data.message) == "exit") break;
+
+        // Отправка структуры
+        send(clientSocket, (char*)&data, sizeof(data), 0);
+
+        // Получение ответа
+        int bytesReceived = recv(clientSocket, (char*)&data, sizeof(data), 0);
+        if (bytesReceived > 0) {
+            cout << "Server reply: " << data.message << endl;
+        }
+        data.id++;
+    }
+
+    closesocket(clientSocket);
+    WSACleanup();
+    return 0;
+}
